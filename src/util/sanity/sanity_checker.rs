@@ -1,3 +1,4 @@
+use super::*;
 use crate::plan::Plan;
 use crate::scheduler::gc_work::*;
 use crate::util::ObjectReference;
@@ -6,7 +7,9 @@ use crate::vm::*;
 use crate::MMTK;
 use crate::{scheduler::*, ObjectQueue};
 use std::collections::HashSet;
+use std::collections::HashMap;
 use std::ops::{Deref, DerefMut};
+use std::sync::Mutex;
 
 #[allow(dead_code)]
 pub struct SanityChecker<ES: Edge> {
@@ -16,6 +19,11 @@ pub struct SanityChecker<ES: Edge> {
     root_edges: Vec<Vec<ES>>,
     /// Cached root nodes for sanity root scanning
     root_nodes: Vec<Vec<ObjectReference>>,
+    pub(crate) iter: ShapesIteration,
+}
+
+lazy_static! {
+    static ref SANITY_SLOTS: Mutex<HashMap<ObjectReference, Shape>> = Mutex::new(HashMap::new());
 }
 
 impl<ES: Edge> Default for SanityChecker<ES> {
@@ -30,6 +38,7 @@ impl<ES: Edge> SanityChecker<ES> {
             refs: HashSet::new(),
             root_edges: vec![],
             root_nodes: vec![],
+            iter: ShapesIteration { epochs: vec![] },
         }
     }
 
@@ -127,15 +136,26 @@ impl<P: Plan> SanityPrepare<P> {
 
 impl<P: Plan> GCWork<P::VM> for SanityPrepare<P> {
     fn do_work(&mut self, _worker: &mut GCWorker<P::VM>, mmtk: &'static MMTK<P::VM>) {
-        info!("Sanity GC prepare");
+        mmtk.get_plan().enter_sanity();
         {
             let mut sanity_checker = mmtk.sanity_checker.lock().unwrap();
             sanity_checker.refs.clear();
+            if mmtk.is_in_harness() {
+                sanity_checker
+                    .iter
+                    .epochs
+                    .push(ShapesEpoch { shapes: vec![] });
+            }
         }
-        for mutator in <P::VM as VMBinding>::VMActivePlan::mutators() {
-            mmtk.scheduler.work_buckets[WorkBucketStage::Prepare]
-                .add(PrepareMutator::<P::VM>::new(mutator));
+
+        // TODO: 
+        if self.plan.constraints().needs_prepare_mutator {
+            for mutator in <P::VM as VMBinding>::VMActivePlan::mutators() {
+                mmtk.scheduler.work_buckets[WorkBucketStage::Prepare]
+                    .add(PrepareMutator::<P::VM>::new(mutator));
+            }
         }
+
         for w in &mmtk.scheduler.worker_group.workers_shared {
             let result = w.designated_work.push(Box::new(PrepareCollector));
             debug_assert!(result.is_ok());
@@ -156,7 +176,11 @@ impl<P: Plan> SanityRelease<P> {
 impl<P: Plan> GCWork<P::VM> for SanityRelease<P> {
     fn do_work(&mut self, _worker: &mut GCWorker<P::VM>, mmtk: &'static MMTK<P::VM>) {
         info!("Sanity GC release");
-        mmtk.sanity_checker.lock().unwrap().clear_roots_cache();
+        // mmtk.sanity_checker.lock().unwrap().clear_roots_cache();
+        {
+            let mut sanity_checker = mmtk.sanity_checker.lock().unwrap();
+            sanity_checker.clear_roots_cache();
+        }
         for mutator in <P::VM as VMBinding>::VMActivePlan::mutators() {
             mmtk.scheduler.work_buckets[WorkBucketStage::Release]
                 .add(ReleaseMutator::<P::VM>::new(mutator));
@@ -231,6 +255,67 @@ impl<VM: VMBinding> ProcessEdgesWork for SanityGCProcessEdges<VM> {
             sanity_checker.refs.insert(object); // "Mark" it
             trace!("Sanity mark object {}", object);
             self.nodes.enqueue(object);
+
+            if self.mmtk().is_in_harness() {
+                // > No val array in Julia
+                // if <VM as VMBinding>::VMScanning::is_val_array(object) {
+                //     sanity_checker
+                //         .iter
+                //         .epochs
+                //         .last_mut()
+                //         .unwrap()
+                //         .shapes
+                //         .push(Shape {
+                //             kind: shape::Kind::ValArray as i32,
+                //             object: object.value() as u64,
+                //             offsets: vec![],
+                //         });
+                // } else 
+                if <VM as VMBinding>::VMScanning::is_obj_array(object) {
+                    sanity_checker
+                        .iter
+                        .epochs
+                        .last_mut()
+                        .unwrap()
+                        .shapes
+                        .push(Shape {
+                            category: <VM as VMBinding>::VMScanning::get_obj_category(object) as i32,
+                            kind: shape::Kind::ObjArray as i32,
+                            object: object.value() as u64,
+                            begin: <VM as VMBinding>::VMScanning::get_obj_array_addr(object).as_usize() as u64,
+                            offsets: vec![],
+                        });
+                } else {
+                    let mut s = vec![];
+                    <VM as VMBinding>::VMScanning::scan_object(
+                        self.worker().tls,
+                        object,
+                        &mut |e: <VM as VMBinding>::VMEdge| {
+                            // s.push(e.as_address().as_usize() as i64 - object.value() as i64);
+                            // info!("edge address: {}", e.as_address().as_usize() as i64);
+                            // s.push(e.as_address().as_usize() as i64 - <VM as VMBinding>::VMScanning::get_obj_array_addr(object).as_usize() as i64);
+                            s.push(e.as_address().as_usize() as i64 - object.value() as i64);
+                            // s.push(e.as_address().as_usize() as i64);
+                        },
+                    );
+                    // if s.len() > 512 {
+                    //     <VM as VMBinding>::VMObjectModel::dump_object(object);
+                    // }
+                    sanity_checker
+                        .iter
+                        .epochs
+                        .last_mut()
+                        .unwrap()
+                        .shapes
+                        .push(Shape {
+                            category: <VM as VMBinding>::VMScanning::get_obj_category(object) as i32,
+                            kind: shape::Kind::Scalar as i32,
+                            object: object.value() as u64,
+                            begin: <VM as VMBinding>::VMScanning::get_obj_array_addr(object).as_usize() as u64,
+                            offsets: s,
+                        });
+                }
+            }
         }
 
         // If the valid object (VO) bit metadata is enabled, all live objects should have the VO

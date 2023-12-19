@@ -26,6 +26,8 @@ use crate::vm::VMBinding;
 use std::cell::UnsafeCell;
 use std::default::Default;
 use std::sync::atomic::{AtomicBool, Ordering};
+#[cfg(feature = "sanity")]
+use std::io::Write;
 use std::sync::Arc;
 use std::sync::Mutex;
 
@@ -230,7 +232,26 @@ impl<VM: VMBinding> MMTK<VM> {
     pub fn harness_end(&'static self) {
         self.stats.stop_all(self);
         self.inside_harness.store(false, Ordering::SeqCst);
+        #[cfg(feature = "sanity")]
+        {
+            use prost::Message;
+            use std::fs::File;
+
+            trace!("Writing shapes file",);
+            let file = File::create("shapes.binpb.zst").unwrap();
+            let mut writer = zstd::Encoder::new(file, 0).unwrap().auto_finish();
+            let mut buf = Vec::new();
+            self.sanity_checker.lock().unwrap().iter.encode(&mut buf).unwrap();
+
+            writer.write_all(&buf).unwrap();
+            trace!("Shapes file done",);
+
+        }
         probe!(mmtk, harness_end);
+    }
+
+    pub(crate) fn is_in_harness(&self) -> bool {
+        self.inside_harness.load(Ordering::Relaxed)
     }
 
     #[cfg(feature = "sanity")]

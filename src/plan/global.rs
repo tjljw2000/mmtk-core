@@ -28,7 +28,7 @@ use crate::util::{VMMutatorThread, VMWorkerThread};
 use crate::vm::*;
 use downcast_rs::Downcast;
 use enum_map::EnumMap;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{Ordering, AtomicBool};
 use std::sync::Arc;
 
 use mmtk_macros::{HasSpaces, PlanTraceObject};
@@ -161,6 +161,21 @@ pub trait Plan: 'static + HasSpaces + Sync + Downcast {
     }
     fn options(&self) -> &Options {
         &self.base().options
+    }
+
+    #[cfg(feature = "sanity")]
+    fn enter_sanity(&self) {
+        self.base().inside_sanity.store(true, Ordering::Relaxed)
+    }
+
+    #[cfg(feature = "sanity")]
+    fn leave_sanity(&self) {
+        self.base().inside_sanity.store(false, Ordering::Relaxed)
+    }
+
+    #[cfg(feature = "sanity")]
+    fn is_in_sanity(&self) -> bool {
+        self.base().inside_sanity.load(Ordering::Relaxed)
     }
 
     fn get_allocator_mapping(&self) -> &'static EnumMap<AllocationSemantics, AllocatorSelector>;
@@ -309,6 +324,8 @@ pub struct BasePlan<VM: VMBinding> {
     pub options: Arc<Options>,
     pub gc_trigger: Arc<GCTrigger<VM>>,
 
+    #[cfg(feature = "sanity")]
+    pub inside_sanity: AtomicBool,
     // Spaces in base plan
     #[cfg(feature = "code_space")]
     #[space]
@@ -417,6 +434,8 @@ impl<VM: VMBinding> BasePlan<VM> {
             global_state: args.global_args.state.clone(),
             gc_trigger: args.global_args.gc_trigger,
             options: args.global_args.options,
+            #[cfg(feature = "sanity")]
+            inside_sanity: AtomicBool::new(false),
         }
     }
 

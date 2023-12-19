@@ -326,4 +326,20 @@ pub trait Scanning<VM: VMBinding> {
         _tracer_context: impl ObjectTracerContext<VM>,
     ) {
     }
+
+    fn is_obj_array(_o: ObjectReference) -> bool {
+        unreachable!()
+    }
+
+    fn is_val_array(_o: ObjectReference) -> bool {
+        unreachable!()
+    }
+
+    fn get_obj_category(_o: ObjectReference) -> i32 {
+        unreachable!()
+    }
+
+    fn get_obj_array_addr(_o: ObjectReference) -> crate::util::Address {
+        unreachable!()
+    }
 }

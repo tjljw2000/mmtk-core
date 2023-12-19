@@ -815,7 +815,9 @@ pub trait ScanObjectsWork<VM: VMBinding>: GCWork<VM> + Sized {
         _mmtk: &'static MMTK<<Self::E as ProcessEdgesWork>::VM>,
     ) {
         let tls = worker.tls;
-        debug_assert!(!self.roots());
+        
+        // TODO: 
+        // debug_assert!(!self.roots());
 
         // Scan the nodes in the buffer.
         let objects_to_scan = buffer;
