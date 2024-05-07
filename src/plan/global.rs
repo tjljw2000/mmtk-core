@@ -499,6 +499,11 @@ impl<VM: VMBinding> BasePlan<VM> {
         VM::VMActivePlan::vm_trace_object::<Q>(queue, object, worker)
     }
 
+    #[cfg(feature = "vm_space")]
+    pub fn is_in_vm_space(&self, object: ObjectReference) -> bool {
+        self.vm_space.in_space(object)
+    }
+
     pub fn prepare(&mut self, _tls: VMWorkerThread, _full_heap: bool) {
         #[cfg(feature = "code_space")]
         self.code_space.prepare();
