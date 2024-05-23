@@ -257,64 +257,29 @@ impl<VM: VMBinding> ProcessEdgesWork for SanityGCProcessEdges<VM> {
             self.nodes.enqueue(object);
 
             if self.mmtk().is_in_harness() {
-                // > No val array in Julia
-                // if <VM as VMBinding>::VMScanning::is_val_array(object) {
-                //     sanity_checker
-                //         .iter
-                //         .epochs
-                //         .last_mut()
-                //         .unwrap()
-                //         .shapes
-                //         .push(Shape {
-                //             kind: shape::Kind::ValArray as i32,
-                //             object: object.value() as u64,
-                //             offsets: vec![],
-                //         });
-                // } else 
-                if <VM as VMBinding>::VMScanning::is_obj_array(object) {
-                    sanity_checker
-                        .iter
-                        .epochs
-                        .last_mut()
-                        .unwrap()
-                        .shapes
-                        .push(Shape {
-                            category: <VM as VMBinding>::VMScanning::get_obj_category(object) as i32,
-                            kind: shape::Kind::ObjArray as i32,
-                            object: object.value() as u64,
-                            begin: <VM as VMBinding>::VMScanning::get_obj_array_addr(object).as_usize() as u64,
-                            offsets: vec![],
-                        });
-                } else {
-                    let mut s = vec![];
-                    <VM as VMBinding>::VMScanning::scan_object(
-                        self.worker().tls,
-                        object,
-                        &mut |e: <VM as VMBinding>::VMEdge| {
-                            // s.push(e.as_address().as_usize() as i64 - object.value() as i64);
-                            // info!("edge address: {}", e.as_address().as_usize() as i64);
-                            // s.push(e.as_address().as_usize() as i64 - <VM as VMBinding>::VMScanning::get_obj_array_addr(object).as_usize() as i64);
-                            s.push(e.as_address().as_usize() as i64 - object.value() as i64);
-                            // s.push(e.as_address().as_usize() as i64);
-                        },
-                    );
-                    // if s.len() > 512 {
-                    //     <VM as VMBinding>::VMObjectModel::dump_object(object);
-                    // }
-                    sanity_checker
-                        .iter
-                        .epochs
-                        .last_mut()
-                        .unwrap()
-                        .shapes
-                        .push(Shape {
-                            category: <VM as VMBinding>::VMScanning::get_obj_category(object) as i32,
-                            kind: shape::Kind::Scalar as i32,
-                            object: object.value() as u64,
-                            begin: <VM as VMBinding>::VMScanning::get_obj_array_addr(object).as_usize() as u64,
-                            offsets: s,
-                        });
-                }
+                let mut s = vec![];
+                <VM as VMBinding>::VMScanning::scan_object(
+                    self.worker().tls,
+                    object,
+                    &mut |e: <VM as VMBinding>::VMEdge| {
+                        // s.push(e.as_address().as_usize() as i64 - object.value() as i64);
+                        // info!("edge address: {}", e.as_address().as_usize() as i64);
+                        // s.push(e.as_address().as_usize() as i64 - <VM as VMBinding>::VMScanning::get_obj_array_addr(object).as_usize() as i64);
+                        s.push(e.as_address().as_usize() as i64 - object.value() as i64);
+                        // s.push(e.as_address().as_usize() as i64);
+                    },
+                );
+                sanity_checker
+                    .iter
+                    .epochs
+                    .last_mut()
+                    .unwrap()
+                    .shapes
+                    .push(Shape {
+                        category: <VM as VMBinding>::VMScanning::get_obj_category(object) as i32,
+                        object: object.value() as u64,
+                        offsets: s,
+                    });
             }
         }
 
